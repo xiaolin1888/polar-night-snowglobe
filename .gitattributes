@@ -1,0 +1,7 @@
+# 二进制资源，禁止换行符转换与文本 diff
+*.glb binary
+*.gltf binary
+*.fbx binary
+*.png binary
+*.jpg binary
+*.zip binary

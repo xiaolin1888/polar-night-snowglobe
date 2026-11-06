@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>极夜雪境 · 水晶球</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#05070c}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    color:#dfe8f2;
+    background:
+      radial-gradient(120% 90% at 50% 18%, #16233a 0%, #0a1220 42%, #05070c 100%);
+    touch-action:none;
+    user-select:none;-webkit-user-select:none;
+  }
+  #stage{position:fixed;inset:0}
+  /* 2026-11-03 画质：canvas 本身做一次轻微的对比/饱和增益。
+     ACES 色调映射后画面容易发灰偏平，这里用 CSS filter 补回
+     一点对比度与色彩浓度，成本几乎为零，且不影响 WebGL 管线。 */
+  canvas{
+    display:block;width:100%;height:100%;
+    filter: contrast(1.07) saturate(1.10) brightness(1.02);
+  }
+  /* 冷暖分离：暗部推蓝、亮部推暖，制造纵深层次（Screen/Multiply 混合） */
+  #grade{
+    position:fixed;inset:0;pointer-events:none;z-index:2;
+    background:
+      radial-gradient(120% 100% at 50% 0%, rgba(120,170,235,.055) 0%, rgba(0,0,0,0) 55%),
+      radial-gradient(100% 80% at 50% 100%, rgba(255,186,110,.045) 0%, rgba(0,0,0,0) 60%);
+    mix-blend-mode:soft-light;
+  }
+  #vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:3;
+    background:radial-gradient(75% 65% at 50% 42%, rgba(0,0,0,0) 40%, rgba(0,0,0,.55) 100%);
+  }
+  #loader{
+    position:fixed;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;
+    background:#05070c;z-index:20;transition:opacity .8s ease;
+  }
+  #loader.done{opacity:0;pointer-events:none}
+  .ltitle{font-size:13px;letter-spacing:6px;color:#8fa7c0;text-indent:6px}
+  .lbar{width:180px;height:2px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
+  .lbar i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#7fa8d0,#f2c879);transition:width .25s ease}
+  #hint{
+    position:fixed;left:50%;top:calc(20px + env(safe-area-inset-top));
+    transform:translateX(-50%);
+    font-size:12px;letter-spacing:2px;color:rgba(200,216,235,.55);
+    pointer-events:none;opacity:0;transition:opacity 1.2s ease;white-space:nowrap;
+  }
+  #hint.show{opacity:1}
+  #tip{
+    position:fixed;left:0;top:0;z-index:12;
+    padding:5px 9px;border-radius:6px;
+    font-size:12px;letter-spacing:1px;color:#eaf2fb;
+    background:rgba(10,16,26,.82);border:1px solid rgba(140,180,225,.28);
+    pointer-events:none;opacity:0;transition:opacity .16s ease;white-space:nowrap;
+    transform:translate(0,0);
+  }
+  #tip.show{opacity:1}
+  #actions{
+    position:fixed;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));
+    display:none;gap:10px;z-index:14;
+  }
+  body.touch #actions{display:flex}
+  #actions button{
+    width:52px;height:52px;border-radius:50%;
+    background:rgba(12,20,32,.62);border:1px solid rgba(150,190,230,.30);
+    color:#dbe8f6;font-size:13px;letter-spacing:1px;
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    touch-action:manipulation;
+  }
+  #actions button:active{background:rgba(30,48,72,.85);transform:scale(.94)}
+  #cfgBtn{
+    position:fixed;right:16px;top:calc(16px + env(safe-area-inset-top));z-index:16;
+    width:38px;height:38px;border-radius:11px;
+    background:rgba(12,20,32,.62);border:1px solid rgba(150,190,230,.28);
+    color:#cfdcec;font-size:12px;letter-spacing:1px;
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    transition:transform .12s ease,background .18s ease;
+  }
+  #cfgBtn:active{transform:scale(.94);background:rgba(30,48,72,.8)}
+  #panel{
+    position:fixed;right:16px;top:calc(64px + env(safe-area-inset-top));z-index:17;
+    width:286px;max-height:calc(100vh - 130px);overflow:auto;
+    background:rgba(10,16,26,.88);border:1px solid rgba(150,190,230,.22);
+    border-radius:14px;padding:14px 14px 10px;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 18px 48px rgba(0,0,0,.45);
+    transform:translateY(-8px) scale(.985);opacity:0;pointer-events:none;
+    transition:opacity .18s ease,transform .18s ease;
+  }
+  #panel.open{opacity:1;transform:none;pointer-events:auto}
+  .ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .ph b{font-size:12px;letter-spacing:3px;color:#cfe0f2;font-weight:500}
+  .ph button{background:none;border:0;color:#7f93a8;font-size:17px;line-height:1;padding:2px 4px}
+  .row{display:grid;grid-template-columns:58px 1fr 44px;align-items:center;gap:9px;
+       margin:9px 0;font-size:11px;color:#9db0c4;letter-spacing:.5px}
+  .row input[type=range]{
+    -webkit-appearance:none;appearance:none;height:2px;border-radius:2px;width:100%;
+    background:linear-gradient(90deg,#5d86b0,#f2c879);outline:none;
+  }
+  .row input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:#eaf2fb;border:1px solid rgba(120,160,200,.75);
+    box-shadow:0 1px 4px rgba(0,0,0,.55);
+  }
+  .row b{font-size:11px;color:#cfdcec;text-align:right;font-weight:400;
+         font-variant-numeric:tabular-nums}
+  .seg{display:flex;gap:6px;grid-column:2 / span 2}
+  .seg button{flex:1;padding:4px 0;font-size:11px;border-radius:6px;
+    background:rgba(255,255,255,.05);border:1px solid rgba(150,190,230,.18);
+    color:#9db0c4;transition:background .15s ease}
+  .seg button.on{background:rgba(120,170,220,.26);border-color:rgba(150,200,240,.6);color:#eaf2fb}
+  .tx{grid-column:2 / span 2;width:100%;background:rgba(255,255,255,.05);
+    border:1px solid rgba(150,190,230,.18);border-radius:6px;color:#e6eef8;
+    font-size:12px;padding:5px 8px;font-family:inherit;letter-spacing:1px;outline:none}
+  .tx:focus{border-color:rgba(150,200,240,.55)}
+  .pf{display:flex;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid rgba(150,190,230,.14)}
+  .pf button{flex:1;padding:7px 0;font-size:11px;border-radius:8px;
+    background:rgba(255,255,255,.05);border:1px solid rgba(150,190,230,.2);
+    color:#b9c9d9;letter-spacing:1px}
+  .pf button:active{background:rgba(120,170,220,.25)}
+  @media (max-width:520px){
+    #panel{left:12px;right:12px;width:auto;max-width:none}
+    .row{grid-template-columns:54px 1fr 40px;gap:8px}
+  }
+  body.touch #cfgBtn{top:auto;bottom:calc(86px + env(safe-area-inset-bottom))}
+  body.touch #panel{top:auto;bottom:calc(86px + env(safe-area-inset-bottom));max-height:62vh}
+  #hud{
+    position:fixed;left:14px;top:12px;font:11px/1.6 ui-monospace,Consolas,monospace;
+    color:#7f93a8;background:rgba(8,12,20,.6);border:1px solid rgba(255,255,255,.08);
+    padding:8px 10px;border-radius:8px;display:none;white-space:pre;
+  }
+  #hud.show{display:block}
+  #err{
+    position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:14px;text-align:center;padding:24px;z-index:30;background:#05070c;
+  }
+  #err.show{display:flex}
+
+  /* ---------------- 桌面端（鼠标 + 宽屏） ---------------- */
+  #desk{position:fixed;left:56px;bottom:58px;z-index:12;display:none;pointer-events:none;
+        max-width:min(330px,32vw)}
+  body.pc #desk{display:block}
+  #desk .t{font-size:27px;font-weight:300;letter-spacing:11px;color:#e9f1fa;margin:0 0 9px;
+           text-shadow:0 4px 30px rgba(0,0,0,.75);white-space:nowrap}
+  #desk .s{font-size:11px;letter-spacing:3px;color:rgba(190,210,232,.45);margin:0 0 20px}
+  #desk .k{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;align-items:center;
+           font-size:11px;color:rgba(186,205,224,.42);letter-spacing:.6px}
+  #desk kbd{
+    font-family:inherit;font-size:10px;letter-spacing:1px;color:#cfdcec;
+    background:rgba(255,255,255,.07);border:1px solid rgba(150,190,230,.22);
+    border-radius:5px;padding:2px 7px;justify-self:end;white-space:nowrap;
+  }
+  body.pc button{cursor:pointer}
+  body.pc #cfgBtn:hover{background:rgba(30,48,72,.85);border-color:rgba(170,205,240,.5);color:#eaf2fb}
+  body.pc .seg button:hover,body.pc .pf button:hover{background:rgba(120,170,220,.18);color:#dfeaf7}
+  body.pc .ph button:hover{color:#cfdcec}
+  body.pc .row:hover span{color:#c2d3e5}
+  body.pc #panel{scrollbar-width:thin}
+  body.pc #panel::-webkit-scrollbar{width:8px}
+  body.pc #panel::-webkit-scrollbar-thumb{background:rgba(150,190,230,.22);border-radius:8px}
+
+  /* 第一人称：收起桌面标题栏，只留一个返回提示 */
+  body.fp #vignette{
+    background:radial-gradient(58% 52% at 50% 46%, rgba(0,0,0,0) 34%, rgba(0,0,0,.34) 68%, rgba(0,0,0,.72) 100%);
+    transition:background .45s ease;
+  }
+  body.fp #desk{display:none}
+  body.fp #panel{max-height:calc(100vh - 96px)}
+  #fpBar{
+    position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:18;
+    display:none;align-items:center;gap:10px;
+    padding:7px 14px;border-radius:999px;
+    background:rgba(10,16,26,.72);border:1px solid rgba(150,190,230,.28);
+    color:#cfdcec;font-size:11px;letter-spacing:1px;white-space:nowrap;
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  }
+  body.fp #fpBar{display:flex}
+  body.fp #hint{display:none}
+  #fpBar b{color:#eaf2fb;font-weight:500}
+  #fpBar button{
+    background:rgba(120,170,220,.20);border:1px solid rgba(150,200,240,.45);
+    color:#eaf2fb;border-radius:999px;padding:3px 10px;font-size:11px;
+  }
+
+  /* H 键：隐藏所有界面，留一张空镜 */
+  body.clean #desk,body.clean #cfgBtn,body.clean #panel,body.clean #hint,
+  body.clean #actions,body.clean #hud,body.clean #tip{opacity:0!important;pointer-events:none!important}
+
+  /* 矮窗口（笔记本横屏 16:9 常见）时收一点 */
+  @media (max-height:620px){
+    #desk{bottom:34px;left:40px}
+    #desk .t{font-size:21px;letter-spacing:8px}
+    #desk .k{font-size:10px;gap:5px 12px}
+    #panel{max-height:calc(100vh - 96px)}
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas></div>
+<div id="grade"></div>
+<div id="vignette"></div>
+<div id="hint">拖动旋转 · 点击物件 · 空格摇一摇</div>
+<div id="desk">
+  <div class="t">极夜雪境</div>
+  <div class="s">水 晶 球 · 互 动 场 景</div>
+  <div class="k">
+    <kbd>拖动</kbd><span>旋转视角</span>
+    <kbd>滚轮</kbd><span>拉近 / 拉远</span>
+    <kbd>点击</kbd><span>触发小动作（鱼咬钩、摩天轮亮灯…）</span>
+    <kbd>双击</kbd><span>回到默认视角</span>
+    <kbd>空格</kbd><span>摇一摇（落雪飞散）</span>
+    <kbd>N / C</kbd><span>昼夜切换 / 打开设置</span>
+    <kbd>V</kbd><span>走进球里（第一人称，WASD 走动）</span>
+    <kbd>M / F / H</kbd><span>流星 / 全屏 / 隐藏界面</span>
+  </div>
+</div>
+<div id="actions">
+  <button id="btnShake">摇</button>
+  <button id="btnDay">昼</button>
+</div>
+<button id="cfgBtn">调</button>
+<div id="panel">
+  <div class="ph"><b>自 定 义</b><button id="cfgClose">×</button></div>
+  <label class="row"><span>昼夜</span><input type="range" id="s-day" min="0" max="100"><b id="v-day">夜</b></label>
+  <label class="row"><span>降雪</span><input type="range" id="s-snow" min="0" max="100"><b id="v-snow">100%</b></label>
+  <label class="row"><span>风力</span><input type="range" id="s-wind" min="0" max="200"><b id="v-wind">100%</b></label>
+  <label class="row"><span>摩天轮</span><input type="range" id="s-ferris" min="0" max="200"><b id="v-ferris">100%</b></label>
+  <label class="row"><span>小火车</span><input type="range" id="s-train" min="0" max="200"><b id="v-train">100%</b></label>
+  <label class="row"><span>灯光</span><input type="range" id="s-glow" min="0" max="200"><b id="v-glow">100%</b></label>
+  <label class="row"><span>亮度</span><input type="range" id="s-exp" min="70" max="140"><b id="v-exp">100%</b></label>
+  <label class="row"><span>极光</span><input type="range" id="s-aurora" min="0" max="200"><b id="v-aurora">100%</b></label>
+  <div class="row"><span>视角</span><div class="seg" id="seg-view"><button data-v="0">环绕</button><button data-v="1">走进球里</button></div></div>
+  <div class="row"><span>环绕</span><div class="seg" id="seg-orbit"><button data-v="0">关</button><button data-v="1">开</button></div></div>
+  <div class="row"><span>画质</span><div class="seg" id="seg-tier"><button data-v="0">高</button><button data-v="1">中</button><button data-v="2">低</button></div></div>
+  <div class="row"><span>铭牌</span><input class="tx" id="in-plaque" maxlength="8" placeholder="极夜雪境"></div>
+  <div class="pf"><button id="cfgReset">恢复默认</button></div>
+</div>
+<div id="fpBar"><b>第一人称</b><span>WASD 走动 · 拖拽转头 · Shift 加速</span><button id="fpExit">返回环绕</button></div>
+<div id="tip"></div>
+<div id="hud"></div>
+<div id="loader">
+  <div class="ltitle">极 夜 雪 境</div>
+  <div class="lbar"><i id="lprog"></i></div>
+</div>
+<div id="err">
+  <img src="./assets/poster.jpg" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.5">
+  <div style="position:relative;text-align:center;padding:24px">
+    <div style="font-size:14px;color:#e8c98a;margin-bottom:8px">无法初始化 3D 渲染</div>
+    <div data-msg style="font-size:12px;color:#9fb2c6;line-height:1.7">请使用较新的 Chrome / Edge，并确认已开启硬件加速</div>
+  </div>
+</div>
+<script>
+window.addEventListener('error', e => {
+  const l = document.querySelector('.ltitle');
+  if (l) l.textContent = 'ERR ' + (e.message || '') + ' @' + (e.filename||'').split('/').pop() + ':' + e.lineno;
+});
+window.addEventListener('unhandledrejection', e => {
+  const l = document.querySelector('.ltitle');
+  if (l) l.textContent = 'REJ ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
+});
+</script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
